@@ -1,64 +1,44 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Heart, Share2, Palette } from 'lucide-react';
-
-// Mock data - in a real app, you would fetch this from an API
-const artworkData = {
-  1: {
-    id: 1,
-    title: 'Abstract Harmony',
-    artist: 'Elena Rodriguez',
-    image: 'https://images.unsplash.com/photo-1549887534-1541e9326642?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
-    price: 450,
-    description: 'A vibrant exploration of color and form, this abstract piece evokes feelings of joy and harmony through its dynamic composition and bold color palette.',
-    medium: 'Acrylic on canvas',
-    dimensions: '24" x 36"',
-    year: 2022,
-    category: 'Abstract',
-  },
-  2: {
-    id: 2,
-    title: 'Serene Landscape',
-    artist: 'Thomas Chen',
-    image: 'https://images.unsplash.com/photo-1559827291-72ee739d0d9a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
-    price: 350,
-    description: 'This peaceful landscape captures the tranquility of a misty morning by the lake. The subtle color palette and soft brushwork create a sense of calm and reflection.',
-    medium: 'Oil on canvas',
-    dimensions: '30" x 40"',
-    year: 2021,
-    category: 'Landscape',
-  },
-  3: {
-    id: 3,
-    title: 'Urban Perspective',
-    artist: 'Maya Johnson',
-    image: 'https://images.unsplash.com/photo-1578926288207-32356a8016e5?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
-    price: 525,
-    description: 'A dynamic cityscape that plays with perspective and architectural forms. This piece captures the energy and rhythm of urban life through bold lines and geometric shapes.',
-    medium: 'Mixed media on panel',
-    dimensions: '36" x 48"',
-    year: 2023,
-    category: 'Urban',
-  },
-};
+import artworkService from '../services/artworkService';
+import savedArtworkService from '../services/savedArtworkService';
+import cartService from '../services/cartService';
+import customizationService from '../services/customizationService';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function ArtworkDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
+  
   const [artwork, setArtwork] = useState(null);
   const [loading, setLoading] = useState(true);
   const [liked, setLiked] = useState(false);
+  const [savingLike, setSavingLike] = useState(false);
+  const [addingToCart, setAddingToCart] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
-    // Simulate API fetch
-    setTimeout(() => {
-      const art = artworkData[id];
-      if (art) {
-        setArtwork(art);
+    const fetchArtworkData = async () => {
+      try {
+        const artworkData = await artworkService.fetchArtworkById(parseInt(id));
+        setArtwork(artworkData);
+        
+        // Check if the user has saved this artwork
+        if (isAuthenticated) {
+          const isSaved = await savedArtworkService.isArtworkSaved(parseInt(id));
+          setLiked(isSaved);
+        }
+      } catch (error) {
+        console.error("Error fetching artwork:", error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
-    }, 500);
-  }, [id]);
+    };
+    
+    fetchArtworkData();
+  }, [id, isAuthenticated]);
 
   const handleBack = () => {
     navigate(-1);
@@ -66,6 +46,82 @@ export default function ArtworkDetail() {
 
   const handleCustomize = () => {
     navigate('/customize', { state: { artwork } });
+  };
+  
+  const handleToggleLike = async () => {
+    if (!isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+    
+    try {
+      setSavingLike(true);
+      
+      if (liked) {
+        await savedArtworkService.unsaveArtwork(artwork.Id);
+        setLiked(false);
+        setSuccessMessage('Removed from saved items');
+      } else {
+        await savedArtworkService.saveArtwork(artwork.Id);
+        setLiked(true);
+        setSuccessMessage('Added to saved items');
+      }
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        setSuccessMessage('');
+      }, 3000);
+    } catch (error) {
+      console.error("Error toggling like:", error);
+    } finally {
+      setSavingLike(false);
+    }
+  };
+  
+  const handleAddToCart = async () => {
+    if (!isAuthenticated) {
+      navigate('/login');
+      return;
+    }
+    
+    try {
+      setAddingToCart(true);
+      
+      // Create a default customization option if none exists
+      const customizationOptions = {
+        size: 'medium',
+        material: 'canvas',
+        frame_style: 'classic',
+        frame_color: 'black',
+        mat_enabled: false,
+        final_price: artwork.price
+      };
+      
+      // Create a customization record for this artwork
+      const customizationData = await customizationService.createCustomizationOption({
+        ...customizationOptions,
+        artwork_id: artwork.Id
+      });
+      
+      // Add the item to the cart
+      await cartService.addToCart(
+        artwork.Id,
+        customizationData.Id,
+        1,
+        artwork.price
+      );
+      
+      setSuccessMessage('Added to cart successfully!');
+      
+      // Clear success message after 3 seconds
+      setTimeout(() => {
+        setSuccessMessage('');
+      }, 3000);
+    } catch (error) {
+      console.error("Error adding to cart:", error);
+    } finally {
+      setAddingToCart(false);
+    }
   };
 
   if (loading) {
@@ -101,6 +157,12 @@ export default function ArtworkDetail() {
         <span>Back to Gallery</span>
       </button>
       
+      {successMessage && (
+        <div className="mb-4 p-4 bg-green-100 text-green-800 rounded-lg">
+          {successMessage}
+        </div>
+      )}
+      
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="bg-white rounded-lg shadow-md overflow-hidden">
           <img 
@@ -116,7 +178,8 @@ export default function ArtworkDetail() {
           
           <div className="flex items-center mt-4 space-x-4">
             <button 
-              onClick={() => setLiked(!liked)}
+              onClick={handleToggleLike}
+              disabled={savingLike}
               className={`flex items-center space-x-1 ${liked ? 'text-red-500' : 'text-gray-500'}`}
             >
               <Heart size={20} fill={liked ? "currentColor" : "none"} />
@@ -134,9 +197,11 @@ export default function ArtworkDetail() {
             
             <div className="mt-4 space-y-3">
               <button 
+                onClick={handleAddToCart}
+                disabled={addingToCart}
                 className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition"
               >
-                Add to Cart
+                {addingToCart ? 'Adding...' : 'Add to Cart'}
               </button>
               
               <button 
